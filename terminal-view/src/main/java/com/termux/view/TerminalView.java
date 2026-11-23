@@ -110,6 +110,10 @@ public final class TerminalView extends View {
     /** Coalesce composition finalization and Return into one IME reset. */
     private boolean mImeRestartPending;
 
+    private static final long IME_COMPOSING_IDLE_TIMEOUT_MS = 100;
+    private final Handler mImeIdleHandler = new Handler(Looper.getMainLooper());
+    private Runnable mImeIdleCommit;
+
     /**
      * The current AutoFill type returned for {@link View#getAutofillType()} by {@link #getAutofillType()}.
      *
@@ -318,7 +322,7 @@ public final class TerminalView extends View {
         mTermSession = session;
         mEmulator = null;
         mCombiningAccent = 0;
-        mComposingText = null;
+        setComposingTextPreview(null);
 
         updateSize();
 
@@ -330,6 +334,7 @@ public final class TerminalView extends View {
 
     @Override
     public InputConnection onCreateInputConnection(EditorInfo outAttrs) {
+        setComposingTextPreview(null);
         // Ensure that inputType is only set if TerminalView is selected view with the keyboard and
         // an alternate view is not selected, like an EditText. This is necessary if an activity is
         // initially started with the alternate view or if activity is returned to from another app
@@ -1119,14 +1124,36 @@ public final class TerminalView extends View {
 
     /** Update the IME composing text preview shown at the cursor and request a redraw if it changed. */
     private void setComposingTextPreview(CharSequence text) {
+        cancelImeIdleCommit();
         CharSequence newPreview = (text != null && text.length() > 0) ? text : null;
         if (newPreview == null) {
             if (mComposingText == null) return;
             mComposingText = null;
         } else {
             mComposingText = newPreview;
+            scheduleImeIdleCommit();
         }
         invalidate();
+    }
+
+    private void cancelImeIdleCommit() {
+        if (mImeIdleCommit != null) {
+            mImeIdleHandler.removeCallbacks(mImeIdleCommit);
+            mImeIdleCommit = null;
+        }
+    }
+
+    /** Flush a quiet composition so single-key terminal commands do not need another key. */
+    private void scheduleImeIdleCommit() {
+        BaseInputConnection connection = mInputConnection;
+        TerminalSession session = mTermSession;
+        mImeIdleCommit = () -> {
+            mImeIdleCommit = null;
+            if (mInputConnection != connection || mTermSession != session) return;
+            if (mEmulator == null || !mClient.isTerminalViewSelected()) return;
+            finalizeComposingIfActive();
+        };
+        mImeIdleHandler.postDelayed(mImeIdleCommit, IME_COMPOSING_IDLE_TIMEOUT_MS);
     }
 
     /**
@@ -1613,6 +1640,7 @@ public final class TerminalView extends View {
 
     @Override
     protected void onDetachedFromWindow() {
+        cancelImeIdleCommit();
         super.onDetachedFromWindow();
 
         if (mTextSelectionCursorController != null) {

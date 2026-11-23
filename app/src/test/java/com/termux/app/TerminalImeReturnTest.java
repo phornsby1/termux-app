@@ -1,5 +1,6 @@
 package com.termux.app;
 
+import android.os.Looper;
 import android.view.KeyEvent;
 import android.view.inputmethod.BaseInputConnection;
 import android.view.inputmethod.EditorInfo;
@@ -21,7 +22,10 @@ import org.robolectric.annotation.LooperMode;
 
 import org.robolectric.util.ReflectionHelpers;
 
+import java.util.concurrent.TimeUnit;
+
 import static org.junit.Assert.assertEquals;
+import static org.robolectric.Shadows.shadowOf;
 
 @RunWith(RobolectricTestRunner.class)
 @Config(manifest = Config.NONE, sdk = 28)
@@ -103,5 +107,70 @@ public class TerminalImeReturnTest {
         assertEquals("123", sent.toString());
         assertEquals("해", connection.getEditable().toString());
         assertEquals(false, restartPending());
+    }
+
+    private void idle(long milliseconds) {
+        shadowOf(Looper.getMainLooper()).idleFor(milliseconds, TimeUnit.MILLISECONDS);
+    }
+
+    @Test
+    public void pendingTmuxCommandIsSentAfterOneHundredMilliseconds() {
+        connection.setComposingText("c", 1);
+        idle(99);
+        assertEquals("", sent.toString());
+        idle(1);
+        assertEquals("c", sent.toString());
+        assertEquals(0, connection.getEditable().length());
+        idle(500);
+        assertEquals("c", sent.toString());
+    }
+
+    @Test
+    public void typingRestartsIdleTimeout() {
+        connection.setComposingText("l", 1);
+        idle(75);
+        connection.setComposingText("ls", 1);
+        idle(75);
+        assertEquals("", sent.toString());
+        idle(25);
+        assertEquals("ls", sent.toString());
+    }
+
+    @Test
+    public void explicitCommitCancelsIdleSend() {
+        connection.setComposingText("c", 1);
+        idle(50);
+        connection.commitText("c", 1);
+        idle(200);
+        assertEquals("c", sent.toString());
+    }
+
+    @Test
+    public void returnCancelsIdleSend() {
+        connection.setComposingText("ls", 1);
+        view.onKeyDown(KeyEvent.KEYCODE_ENTER,
+            new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER));
+        idle(200);
+        assertEquals("ls", sent.toString());
+    }
+
+    @Test
+    public void replacingInputConnectionCancelsOldIdleSend() {
+        connection.setComposingText("old", 1);
+        idle(50);
+        connection = (BaseInputConnection) view.onCreateInputConnection(new EditorInfo());
+        connection.setComposingText("c", 1);
+        idle(50);
+        assertEquals("", sent.toString());
+        idle(50);
+        assertEquals("c", sent.toString());
+    }
+
+    @Test
+    public void detachingViewCancelsIdleSend() {
+        connection.setComposingText("c", 1);
+        ReflectionHelpers.callInstanceMethod(view, "onDetachedFromWindow");
+        idle(200);
+        assertEquals("", sent.toString());
     }
 }
