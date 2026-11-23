@@ -107,6 +107,9 @@ public final class TerminalView extends View {
      */
     private BaseInputConnection mInputConnection;
 
+    /** Coalesce composition finalization and Return into one IME reset. */
+    private boolean mImeRestartPending;
+
     /**
      * The current AutoFill type returned for {@link View#getAutofillType()} by {@link #getAutofillType()}.
      *
@@ -407,6 +410,10 @@ public final class TerminalView extends View {
                 Editable content = getEditable();
                 sendTextToTerminal(content);
                 content.clear();
+                // Some IMEs commit Return as text instead of sending a key event.
+                if (text.toString().indexOf('\n') >= 0 || text.toString().indexOf('\r') >= 0) {
+                    scheduleImeRestart();
+                }
                 return true;
             }
 
@@ -846,6 +853,11 @@ public final class TerminalView extends View {
         if (!KeyEvent.isModifierKey(keyCode)) {
             finalizeComposingIfActive();
         }
+        // The IME may have committed the word before dispatching Return. In that case
+        // there is no preview left, but its internal word buffer still needs resetting.
+        if (keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER) {
+            scheduleImeRestart();
+        }
         if (isSelectingText()) {
             stopTextSelectionMode();
         }
@@ -1128,8 +1140,8 @@ public final class TerminalView extends View {
      * so {@code finishComposingText} sends it (no direct pty write).
      *
      * Afterwards {@code restartInput} is posted so the IME discards its own composing buffer
-     * (some IMEs keep committed text stale in it). Only after finalize — not every commit — so
-     * digit-only input is unaffected.
+     * (some IMEs keep committed text stale in it). Return also requests a reset even if
+     * composition was already committed. Ordinary text commits do not restart input.
      */
     private void finalizeComposingIfActive() {
         if (mComposingText == null) return;
@@ -1140,7 +1152,17 @@ public final class TerminalView extends View {
             }
             mInputConnection.finishComposingText();
         }
+        scheduleImeRestart();
+    }
+
+    private void scheduleImeRestart() {
+        if (mImeRestartPending) return;
+        mImeRestartPending = true;
+        BaseInputConnection connection = mInputConnection;
         post(() -> {
+            mImeRestartPending = false;
+            // A focus/session change may already have installed a fresh connection.
+            if (mInputConnection != connection) return;
             InputMethodManager imm = (InputMethodManager) getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
             if (imm != null) imm.restartInput(TerminalView.this);
         });
