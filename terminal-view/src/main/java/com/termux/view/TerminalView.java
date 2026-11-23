@@ -1143,8 +1143,12 @@ public final class TerminalView extends View {
         }
     }
 
-    /** Flush a quiet composition so single-key terminal commands do not need another key. */
+    /** Only single-character compositions time out; words stay editable in the IME. */
     private void scheduleImeIdleCommit() {
+        // Keep glide-typed words available for correction and let the IME insert spaces
+        // on its normal commit path, without restarting its input connection.
+        if (mComposingText == null ||
+            Character.codePointCount(mComposingText, 0, mComposingText.length()) != 1) return;
         BaseInputConnection connection = mInputConnection;
         TerminalSession session = mTermSession;
         mImeIdleCommit = () -> {

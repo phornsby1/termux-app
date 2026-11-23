@@ -126,14 +126,51 @@ public class TerminalImeReturnTest {
     }
 
     @Test
-    public void typingRestartsIdleTimeout() {
+    public void growingIntoWordCancelsSingleCharacterTimeout() {
         connection.setComposingText("l", 1);
         idle(75);
         connection.setComposingText("ls", 1);
-        idle(75);
+        idle(1000);
         assertEquals("", sent.toString());
-        idle(25);
-        assertEquals("ls", sent.toString());
+        assertEquals("ls", connection.getEditable().toString());
+        assertEquals(false, restartPending());
+    }
+
+    @Test
+    public void glideTypedWordCanBeCorrectedAndCommittedWithSpaces() {
+        connection.setComposingText("hellp", 1);
+        idle(1000);
+        assertEquals("", sent.toString());
+        connection.setComposingText("hello", 1);
+        idle(1000);
+        assertEquals("hello", connection.getEditable().toString());
+        assertEquals("", sent.toString());
+        connection.commitText("hello", 1);
+        connection.commitText(" ", 1);
+        connection.setComposingText("world", 1);
+        idle(1000);
+        assertEquals("hello ", sent.toString());
+        connection.commitText("world ", 1);
+        assertEquals("hello world ", sent.toString());
+        assertEquals(false, restartPending());
+    }
+
+    @Test
+    public void changingSingleCharacterRestartsTimeout() {
+        connection.setComposingText("c", 1);
+        idle(75);
+        connection.setComposingText("d", 1);
+        idle(99);
+        assertEquals("", sent.toString());
+        idle(1);
+        assertEquals("d", sent.toString());
+    }
+
+    @Test
+    public void supplementaryUnicodeCharacterCountsAsOneCharacter() {
+        connection.setComposingText("\uD83D\uDE00", 1);
+        idle(100);
+        assertEquals("\uD83D\uDE00", sent.toString());
     }
 
     @Test
